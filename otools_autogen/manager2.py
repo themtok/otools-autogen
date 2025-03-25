@@ -82,7 +82,7 @@ def create_modifier_class(tool: Tool, prefix="dasd") -> Type:
             parsed_message = message
         else:
             parsed_message = tool.card.inputs.parse_obj(message)
-        print(f"{self.__class__} Received message: {parsed_message}")
+        print(f"---> {self.__class__} Received message: {parsed_message}")
         out = tool.card.outputs(output="oout")
         
         await self.publish_message(out, DefaultTopicId())  # type: ignore
@@ -113,7 +113,7 @@ def create_modifier_class(tool: Tool, prefix="dasd") -> Type:
 
     # Define __init__ with proper super call
     def __init__(self):
-        print(f"A modifier agent. {str(self)}")
+        print(f"__init__  A agent. {str(self)}")
         super(self.__class__, self).__init__("A modifier agent.")
 
     # Build the class dict
@@ -124,7 +124,7 @@ def create_modifier_class(tool: Tool, prefix="dasd") -> Type:
     }
 
     # Dynamically create the class
-    ModifierCls = type(prefix+"Modifier", (RoutedAgent,), class_dict)
+    ModifierCls = type(prefix+"Tool", (RoutedAgent,), class_dict)
 
     # Apply the class decorator
     # ModifierCls = default_subscription(ModifierCls)
@@ -133,6 +133,7 @@ def create_modifier_class(tool: Tool, prefix="dasd") -> Type:
 
 tool_cls = create_modifier_class(tool=MyTool(),prefix="One")
 tool_cls2 = create_modifier_class(tool=MyTool(),prefix="Two")
+global_agent = create_modifier_class(tool=MyTool(),prefix="Global")
 
 
 
@@ -157,13 +158,24 @@ async def main():
     await runtime.add_subscription(specialist_subscription2)
 
 
+    global_agent_type = await global_agent.register(
+        runtime=runtime,
+        type="global_agent",
+        factory=lambda: global_agent(),
+    )
+
+    await runtime.add_subscription(DefaultSubscription(topic_type='*',agent_type=global_agent_type))
+    # await runtime.add_subscription(DefaultSubscription(agent_type="global_agent", topic_type="default"))
+    # await runtime.add_subscription(DefaultSubscription(agent_type="global_agent", topic_type="default"))
+    
+
 
     input = MyTool.MyToolInput(input="hello")
     runtime.start()
     await runtime.publish_message(input,topic_id=DefaultTopicId(source="one"))
-    await runtime.publish_message(input,topic_id=DefaultTopicId(source="one"))
-    await runtime.publish_message(input,topic_id=DefaultTopicId(source="one"))
-    await runtime.publish_message(input,topic_id=DefaultTopicId(source="one"))
+    # await runtime.publish_message(input,topic_id=DefaultTopicId(source="one"))
+    # await runtime.publish_message(input,topic_id=DefaultTopicId(source="one"))
+    await runtime.publish_message(input,topic_id=DefaultTopicId(source="two"))
     await runtime.publish_message(input,topic_id=DefaultTopicId(source="three"))
 
     await runtime.publish_message(input,topic_id=DefaultTopicId(source="four"))
