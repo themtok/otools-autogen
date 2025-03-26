@@ -2,6 +2,7 @@ from dataclasses import dataclass
 from pydantic import BaseModel
 from abc import ABC, abstractmethod
 import asyncio
+from functools import wraps
 
 from autogen_core._default_subscription import DefaultSubscription
 from collections import defaultdict
@@ -10,6 +11,7 @@ import uuid
 import enum
 from typing import Any
 from autogen_core import (
+    AgentId,
     MessageContext,
     RoutedAgent,
     BaseAgent,
@@ -18,121 +20,71 @@ from autogen_core import (
     TypeSubscription,
     message_handler,
 )
-
+from .tools import create_tool_class, Tool, ToolCard
 
 import logging
 
 from autogen_core import TRACE_LOGGER_NAME
+
+from .agents import Orchestrator, QueryAnalyzer, ActionPredictor, CommandGenerator, CommandExecutor, ContextVerifier
+from .utils import only_direct, logger
 
 # logging.basicConfig(level=logging.DEBUG)
 # logger = logging.getLogger(TRACE_LOGGER_NAME)
 # logger.addHandler(logging.StreamHandler())
 # logger.setLevel(logging.DEBUG)
 
-@dataclass
-class ToolCard:
-    name: str
-    description: str
-    inputs: type[BaseModel]
-    outputs: type[BaseModel]
-    user_metadata: dict
 
 
-class Tool(ABC):
-    @property
-    @abstractmethod
-    def card(self) -> ToolCard:
-        pass
-    
-    @abstractmethod
-    async def run(self, inputs: BaseModel) -> BaseModel:
-        pass
 
 
-def create_tool_class(tool: Tool) -> type[RoutedAgent]:
-        async def handle_message(self, message, ctx: MessageContext):
-            parsed_message = None
-            if isinstance(message, tool.card.inputs):
-                parsed_message = message
-            else:
-                parsed_message = tool.card.inputs.model_validate(message)
-            out = await tool.run(parsed_message) 
-            parsed_response = tool.card.outputs.model_validate(out)                           
-            await self.publish_message(parsed_response, ctx.topic_id)  # type: ignore
 
-        handle_message.__annotations__ = {
-            "message": tool.card.inputs,
-            "ctx": MessageContext,
-            "return": None,
-        }
 
-        handle_message = message_handler(handle_message)
-
-        def __init__(self):
-            print(f"__init__  {tool.card.name} agent. {str(self)}")
-            super(self.__class__, self).__init__(f"Tool: {tool.card.name} agent.")
-
-        class_dict = {
-            "__init__": __init__,
-            "handle_message": handle_message
-        }
-
-        ToolCls = type(tool.card.name, (RoutedAgent,), class_dict)
-
-        return ToolCls
 
 @dataclass
-class MessageBase:
-    pass
-
-@dataclass
-class UserRequest(MessageBase):
+class UserRequest:
     message: str
     files: list[str]
+    max_steps: int = 5
 
 #class for the response from the agent
 @dataclass
-class UserResponse(MessageBase):
+class UserResponse:
     session_id: str
     message: str
 
 @dataclass
-class UserRequest2(MessageBase):
+class UserRequest2:
     message: str
     files: list[str]
-
-
-class Orchestrator(BaseAgent):
-    def __init__(self, manager: "Manager"):
-        super(self.__class__, self).__init__("OrchestratorAgent")
-        print(f">>>>__init__  Orchestrator agent. {str(self)}")
-        self._manager = manager
     
-    
-    async def on_message_impl(self, message:Any, ctx: MessageContext)->None:
-        session_id = ctx.topic_id.source
-        print(f"=============Orchestrator received UserRequest message: {message} with topic id: {ctx.topic_id}")
-        await self.publish_message(UserResponse(session_id="123", message="Response"), topic_id=DefaultTopicId(source=session_id))
+       
+            
+
 
 class Manager:
     class SessionState(enum.Enum):
         WAITING = 1
         PROCESSING = 2
-
-
     @dataclass
     class Session:
         session_id: str
         to_client_queue: asyncio.Queue
         state: "Manager.SessionState"
-
-
-
     def __init__(self):
         self._tools = {}
         self._sessions = {}
+        
+    def register_tool(self, tool_name,tool: type[Tool]):
+        self._tools[tool_name] = tool()
+    
+    def get_tool(self, tool_name: str) -> Tool:
+        return self._tools[tool_name]
+    
+    def get_tool_cards(self) -> dict:
+        return {tool_name: tool.card for tool_name, tool in self._tools.items()}
 
-    def _init_session(self, session_id: str):
+    async def  _init_session(self, session_id: str):
         if session_id is None:
             session_id = str(uuid.uuid4())
         else:
@@ -143,6 +95,7 @@ class Manager:
             to_client_queue=asyncio.Queue(),
             state=Manager.SessionState.WAITING
         )
+        await self.runtime.publish_message("bootstrap", DefaultTopicId(source=session_id))   
         return session_id
 
         
@@ -150,8 +103,8 @@ class Manager:
 
     async def send_message(self, message: UserRequest, session_id: str = None):
         if session_id not in self._sessions:
-            session_id = self._init_session(session_id)
-        session = self._sessions[session_id]
+            session_id = await self._init_session(session_id)
+        _session = self._sessions[session_id]
         await self.runtime.publish_message(message=message,topic_id=DefaultTopicId(source=session_id))
         return session_id
     
@@ -159,7 +112,19 @@ class Manager:
     async def start(self):
         self.runtime = SingleThreadedAgentRuntime()
         await self._add_internal_agents(self.runtime)
+        for tool_name, tool in self._tools.items():
+            tool_cls = create_tool_class(tool)
+            await tool_cls.register(
+                runtime=self.runtime,
+                type=tool.card.name,
+                factory=lambda cls=tool_cls: cls()
+            )
+            subscr = DefaultSubscription(agent_type=tool.card.name)
+            await self.runtime.add_subscription(subscr)
+        
+        
         self.runtime.start()
+         
 
     async def stop(self,when_idle=False):
         if when_idle:
@@ -169,8 +134,26 @@ class Manager:
 
 
     async def _add_internal_agents(self, runtime):
+        internal_agents = [
+            ("QueryAnalyzer", QueryAnalyzer),
+            ("ActionPredictor", ActionPredictor),
+            ("CommandGenerator", CommandGenerator),
+            ("CommandExecutor", CommandExecutor),
+            ("ContextVerifier", ContextVerifier)
+        ]
         
-                
+        for agent_name, agent_cls in internal_agents:
+            agent_type = await agent_cls.register(
+                runtime=runtime,
+                type=agent_name,
+                factory=lambda cls=agent_cls: cls()
+            )
+            subscr = DefaultSubscription(agent_type=agent_type)
+            await runtime.add_subscription(subscr)
+            
+            
+        
+        from .agents import Orchestrator
         orch_agent_type = await Orchestrator.register(
             runtime=runtime,
             type="OrchestratorAgent",
@@ -178,43 +161,7 @@ class Manager:
         )
         
         orch_subscr = DefaultSubscription(agent_type=orch_agent_type)
-        # orch_subscr = TypeSubscription(agent_type=orch_agent_type)
-        await self.runtime.add_subscription(orch_subscr)
-
-        orch_agent_type = await Orchestrator.register(
-            runtime=runtime,
-            type="OrchestratorAgent2",
-            factory=lambda: Orchestrator(self)
-        )
-        
-        orch_subscr = DefaultSubscription(agent_type=orch_agent_type)
-        # orch_subscr = TypeSubscription(agent_type=orch_agent_type)
-        await self.runtime.add_subscription(orch_subscr)
-
-        
-
-
-
-if __name__ == "__main__":
-    async def m():
-        m = Manager()
-        await m.start()
-        print("Manager started.")
-        sid = await m.send_message(UserRequest(message="Hello", files=["file1", "file2"]))
-        print(f"---------------Session id: {sid}")
-        await m.send_message(UserRequest2(message="Hello2", files=["file1", "file2"]), session_id=sid)
-
-
-        sid2 = await m.send_message(UserRequest(message="Hello", files=["file1", "file2"]))
-        print(f"----------------Session id: {sid2}")
-        await m.send_message(UserRequest2(message="Hello2", files=["file1", "file2"]), session_id=sid2)
-        await m.send_message(message="dupa", session_id=sid2)
-
-
-        await m.stop(True)
-
-
-
-    asyncio.run(m())
+        await runtime.add_subscription(orch_subscr)
+       
 
         

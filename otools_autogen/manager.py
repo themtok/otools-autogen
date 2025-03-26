@@ -212,6 +212,7 @@ class DefaultManager():
     
 if __name__ == "__main__":
     class MyTool(Tool):
+       
         @property
         def card(self) -> ToolCard:
             return ToolCard(
