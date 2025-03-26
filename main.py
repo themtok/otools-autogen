@@ -1,6 +1,6 @@
 import asyncio
 from pydantic import BaseModel
-from otools_autogen.manager_v2 import Manager, ToolCard, UserRequest, Tool, UserRequest2
+from otools_autogen.manager_v2 import Manager, ToolCard, UserRequest, Tool
 from dotenv import load_dotenv
 load_dotenv()
 
@@ -98,6 +98,8 @@ async def m():
         print("Manager started.")
         sid = await m.send_message(UserRequest(message="Compose diet for diabetic", files=[]))
         print(f"---------------Session id: {sid}")
+        async for msg in m.stream(sid):
+            print(f"Message received: {msg}")
 
         # sid2 = await m.send_message(UserRequest(message="Hello", files=["file1", "file2"]))
         # print(f"----------------Session id: {sid2}")

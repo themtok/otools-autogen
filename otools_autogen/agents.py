@@ -24,7 +24,7 @@ from .utils import only_direct, logger, llm_logger
 
 
 if TYPE_CHECKING:
-    from .manager_v2 import Manager, UserRequest
+    from .manager_v2 import Manager, UserRequest, UserResponse
     
     
 @dataclass
@@ -137,6 +137,102 @@ def get_image_info(image_path: str) -> Dict[str, Any]:
 
 
 
+    
+    
+class Orchestrator(BaseAgent):
+    def __init__(self, manager:"Manager"):
+        super(self.__class__, self).__init__("OrchestratorAgent")
+        logger.debug(f"Orchestrator initialized. {str(self)} {self.id}")
+        
+        self._manager = manager
+        
+    
+    
+    async def on_message_impl(self, message:"UserRequest", ctx: MessageContext)->None:
+        from .manager_v2 import UserResponse
+        session_id = None
+        if not ctx.topic_id is None:
+            session_id = ctx.topic_id.source
+        to_client_queue = self._manager.get_session(ctx.topic_id.source).to_client_queue
+
+        logger.debug(f"Orchestrator {self.id} received message: {message} with topic id: {session_id}")
+        image_infos = [get_image_info(image_path) for image_path in message.files]
+        all_tools = self._manager.get_tool_cards()
+        all_tools_names = list(all_tools.keys())
+        all_tools_metadata = [tool.get_metadata() for tool in all_tools.values()]
+        qar = QueryAnalyzerRequest(
+            user_query=message.message, 
+            images=message.files, 
+            image_infos=image_infos,
+            all_tools_names=all_tools_names, 
+            all_tools_medatada=all_tools_metadata
+            )
+        query_analysis:QueryAnalysisLLMResponse = await self.send_message(qar, AgentId(type="QueryAnalyzer", key=session_id))
+
+        step_no = 0
+        actions_history = {}
+        conclusion = False
+        while step_no < message.max_steps:
+            step_no += 1
+            action_predictor_request = ActionPredictorRequest(
+                initial_query=message.message,
+                image_paths=message.files,
+                query_analysis=query_analysis,
+                step_count=step_no,
+                max_step_count=message.max_steps,
+                aviailable_tools=list(self._manager.get_tool_cards().keys()),
+                aviailable_tools_metadata=[tool.get_metadata() for tool in self._manager.get_tool_cards().values()],
+                actions_history=actions_history
+            )
+            action_predictor_response:ActionPredictonLLMResponse = await self.send_message(action_predictor_request, AgentId(type="ActionPredictor", key=session_id))
+            selected_tool_card:ToolCard = self._manager.get_tool_cards()[action_predictor_response.tool_name]
+            selected_tool_id = selected_tool_card.tool_id
+            selected_tool_metadata = selected_tool_card.get_metadata()
+            cgr = CommandGeneratorRequest(
+                initial_query=message.message,
+                query_analysis=query_analysis,
+                context=action_predictor_response.context,
+                sub_goal=action_predictor_response.sub_goal,
+                tool_name=action_predictor_response.tool_name,
+                tool_metadata=selected_tool_metadata,
+                image_paths=message.files
+            )
+            command_response:ToolCommandLLMResponse = await self.send_message(cgr, AgentId(type="CommandGenerator", key=session_id))
+            parsed_arg = json.loads(command_response.argument)
+            invocation_arg = selected_tool_card.inputs.model_validate(parsed_arg)
+            tool_result = await self.send_message(invocation_arg, AgentId(type=selected_tool_id, key=session_id))
+            to_client_queue.put_nowait(UserResponse(session_id=session_id, message=None, tool_used=selected_tool_id, final=False))
+            actions_history[f"Step {step_no}"] = {
+                "tool_name": action_predictor_response.tool_name,
+                "sub_goal": action_predictor_response.sub_goal,
+                "argument": command_response.argument,
+                "result": tool_result
+            }
+            
+            cvr = ContextVerifierRequest(
+                image_paths=message.files,
+                question=message.message,
+                image_info=image_infos,
+                available_tools=all_tools_names,
+                toolbox_metadata=all_tools_metadata,
+                query_analysis=query_analysis,
+                memory=actions_history
+            )
+            context_verifier_result = await self.send_message(cvr, AgentId(type="ContextVerifier", key=session_id))
+            if context_verifier_result.stop_signal:
+                conclusion = True
+                break
+        final_output_request = FinalOutputRequest(
+            question=message.message,
+            image_info=image_infos,
+            memory=actions_history,
+            image_paths=message.files
+        )
+        final_output = await self.send_message(final_output_request, AgentId(type="FinalOutputAgent", key=session_id)) 
+        to_client_queue.put_nowait(UserResponse(session_id=session_id, message=final_output, tool_used=None, final=True))         
+
+            
+            
 class QueryAnalyzer(BaseAgent):
     def __init__(self):
         super().__init__("QueryAnalyzer")
@@ -199,113 +295,6 @@ Please present your analysis in a clear, structured format.
         
         llm_logger.debug(f"[QueryAnalyzer] LLM response: {llm_response}")
         return llm_response
-        
-        
-        
-        
-    
-    
-    
-class Orchestrator(BaseAgent):
-    def __init__(self, manager:"Manager"):
-        super(self.__class__, self).__init__("OrchestratorAgent")
-        logger.debug(f"Orchestrator initialized. {str(self)} {self.id}")
-        
-        self._manager = manager
-        
-    
-    
-    async def on_message_impl(self, message:"UserRequest", ctx: MessageContext)->None:
-        session_id = None
-        if not ctx.topic_id is None:
-            session_id = ctx.topic_id.source
-        logger.debug(f"Orchestrator {self.id} received message: {message} with topic id: {session_id}")
-        image_infos = [get_image_info(image_path) for image_path in message.files]
-        all_tools = self._manager.get_tool_cards()
-        all_tools_names = list(all_tools.keys())
-        all_tools_metadata = [tool.get_metadata() for tool in all_tools.values()]
-        qar = QueryAnalyzerRequest(
-            user_query=message.message, 
-            images=message.files, 
-            image_infos=image_infos,
-            all_tools_names=all_tools_names, 
-            all_tools_medatada=all_tools_metadata
-            )
-        query_analysis:QueryAnalysisLLMResponse = await self.send_message(qar, AgentId(type="QueryAnalyzer", key=session_id))
-        step_no = 0
-        actions_history = {}
-        conclusion = False
-        while step_no < message.max_steps:
-            step_no += 1
-            action_predictor_request = ActionPredictorRequest(
-                initial_query=message.message,
-                image_paths=message.files,
-                query_analysis=query_analysis,
-                step_count=step_no,
-                max_step_count=message.max_steps,
-                aviailable_tools=list(self._manager.get_tool_cards().keys()),
-                aviailable_tools_metadata=[tool.get_metadata() for tool in self._manager.get_tool_cards().values()],
-                actions_history=actions_history
-            )
-            action_predictor_response:ActionPredictonLLMResponse = await self.send_message(action_predictor_request, AgentId(type="ActionPredictor", key=session_id))
-            selected_tool_card:ToolCard = self._manager.get_tool_cards()[action_predictor_response.tool_name]
-            selected_tool_id = selected_tool_card.tool_id
-            selected_tool_metadata = selected_tool_card.get_metadata()
-            cgr = CommandGeneratorRequest(
-                initial_query=message.message,
-                query_analysis=query_analysis,
-                context=action_predictor_response.context,
-                sub_goal=action_predictor_response.sub_goal,
-                tool_name=action_predictor_response.tool_name,
-                tool_metadata=selected_tool_metadata,
-                image_paths=message.files
-            )
-            command_response:ToolCommandLLMResponse = await self.send_message(cgr, AgentId(type="CommandGenerator", key=session_id))
-            parsed_arg = json.loads(command_response.argument)
-            invocation_arg = selected_tool_card.inputs.model_validate(parsed_arg)
-            tool_result = await self.send_message(invocation_arg, AgentId(type=selected_tool_id, key=session_id))
-            actions_history[f"Step {step_no}"] = {
-                "tool_name": action_predictor_response.tool_name,
-                "sub_goal": action_predictor_response.sub_goal,
-                "argument": command_response.argument,
-                "result": tool_result
-            }
-            
-            cvr = ContextVerifierRequest(
-                image_paths=message.files,
-                question=message.message,
-                image_info=image_infos,
-                available_tools=all_tools_names,
-                toolbox_metadata=all_tools_metadata,
-                query_analysis=query_analysis,
-                memory=actions_history
-            )
-            context_verifier_result = await self.send_message(cvr, AgentId(type="ContextVerifier", key=session_id))
-            if context_verifier_result.stop_signal:
-                conclusion = True
-                break
-        final_output_request = FinalOutputRequest(
-            question=message.message,
-            image_info=image_infos,
-            memory=actions_history,
-            image_paths=message.files
-        )
-        final_output = await self.send_message(final_output_request, AgentId(type="FinalOutputAgent", key=session_id)) 
-        print(f"Final output: {final_output}")           
-
-            
-            
-            
-
-                
-        
-        
-    
-        
-    
-
-
-        
         
         
 class ActionPredictor(BaseAgent):

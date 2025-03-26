@@ -51,12 +51,10 @@ class UserRequest:
 class UserResponse:
     session_id: str
     message: str
+    tool_used: str
+    final: bool
 
-@dataclass
-class UserRequest2:
-    message: str
-    files: list[str]
-    
+
        
             
 
@@ -79,6 +77,9 @@ class Manager:
     
     def get_tool(self, tool_name: str) -> Tool:
         return self._tools[tool_name]
+    
+    def get_session(self, session_id: str) -> "Manager.Session":
+        return self._sessions[session_id]
     
     def get_tool_cards(self) -> dict:
         return {tool_name: tool.card for tool_name, tool in self._tools.items()}
@@ -107,6 +108,17 @@ class Manager:
         await self.runtime.publish_message(message=message,topic_id=DefaultTopicId(source=session_id))
         return session_id
     
+    async def stream(self, session_id):
+        if session_id not in self._sessions:
+            raise RuntimeError("Invalid session")
+
+        queue = self._sessions[session_id].to_client_queue
+
+        while True:
+            msg:UserResponse = await queue.get()
+            yield msg
+            if msg.final:
+                break
 
     async def start(self):
         self.runtime = SingleThreadedAgentRuntime()
