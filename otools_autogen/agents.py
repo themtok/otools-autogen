@@ -80,6 +80,7 @@ class FinalOutputRequest():
     image_info: list[str]
     memory: str
     image_paths: list[str]
+    query_analysis: str
 
     
     
@@ -149,6 +150,7 @@ class Orchestrator(BaseAgent):
     
     
     async def on_message_impl(self, message:"UserRequest", ctx: MessageContext)->None:
+        if message=="bootstrap": return
         from .manager_v2 import UserResponse
         session_id = None
         if not ctx.topic_id is None:
@@ -198,16 +200,27 @@ class Orchestrator(BaseAgent):
                 image_paths=message.files
             )
             command_response:ToolCommandLLMResponse = await self.send_message(cgr, AgentId(type="CommandGenerator", key=session_id))
-            parsed_arg = json.loads(command_response.argument)
-            invocation_arg = selected_tool_card.inputs.model_validate(parsed_arg)
-            tool_result = await self.send_message(invocation_arg, AgentId(type=selected_tool_id, key=session_id))
-            to_client_queue.put_nowait(UserResponse(session_id=session_id, message=None, tool_used=selected_tool_id, final=False))
-            actions_history[f"Step {step_no}"] = {
-                "tool_name": action_predictor_response.tool_name,
-                "sub_goal": action_predictor_response.sub_goal,
-                "argument": command_response.argument,
-                "result": tool_result
-            }
+            try:
+                parsed_arg = json.loads(command_response.argument)
+                invocation_arg = selected_tool_card.inputs.model_validate(parsed_arg)
+                tool_result = await self.send_message(invocation_arg, AgentId(type=selected_tool_id, key=session_id))
+                to_client_queue.put_nowait(UserResponse(session_id=session_id, message=action_predictor_response.sub_goal, tool_used=selected_tool_id, final=False))
+                actions_history[f"Step {step_no}"] = {
+                    "tool_name": action_predictor_response.tool_name,
+                    "sub_goal": action_predictor_response.sub_goal,
+                    "argument": command_response.argument,
+                    "result": tool_result
+                }
+            except Exception as e:
+                actions_history[f"Step {step_no}"] = {
+                    "tool_name": action_predictor_response.tool_name,
+                    "sub_goal": action_predictor_response.sub_goal,
+                    "argument": command_response.argument,
+                    "result": f"Error executing tool: {str(e)}"
+                }
+                to_client_queue.put_nowait(UserResponse(session_id=session_id, message=f"Error executing tool: {str(e)}", tool_used=selected_tool_id, final=False))
+                continue
+                
             
             cvr = ContextVerifierRequest(
                 image_paths=message.files,
@@ -226,7 +239,8 @@ class Orchestrator(BaseAgent):
             question=message.message,
             image_info=image_infos,
             memory=actions_history,
-            image_paths=message.files
+            image_paths=message.files,
+            query_analysis=query_analysis
         )
         final_output = await self.send_message(final_output_request, AgentId(type="FinalOutputAgent", key=session_id)) 
         to_client_queue.put_nowait(UserResponse(session_id=session_id, message=final_output, tool_used=None, final=True))         
@@ -623,8 +637,21 @@ Your response should be well-organized and include the following sections:
 6. Conclusion:
    - Summarize the main points and reinforce the answer to the query.
    - If appropriate, suggest potential next steps or areas for further investigation."""
+        prompt_generate_final_output = f"""
+Context:
+Query: {message.question}   
+Image: {message.image_info}
+Initial Analysis:
+{message.query_analysis}
+Actions Taken:
+{message.memory}
+
+Please generate the concise output based on the query, image information, initial analysis, and actions taken. Break down the process into clear, logical, and conherent steps. Conclude with a precise and direct answer to the query.
+
+Answer:
+"""
    
-   
+        llm_logger.debug(f"[FinalOutputAgent] LLM prompt: {prompt_generate_final_output}")
         client = AsyncOpenAI(api_key=os.getenv("OPEN_AI_API_KEY"))
         images_b64content = []
         for image_path in message.image_paths:
@@ -635,7 +662,7 @@ Your response should be well-organized and include the following sections:
         input=[{
                 "role": "user",
                 "content": [
-                    {"type": "text", "text": query_prompt},
+                    {"type": "text", "text": prompt_generate_final_output},
                 ]+images_part,
             }]
         completion = await client.chat.completions.create(
