@@ -8,12 +8,24 @@ from .utils import only_direct, logger
 
 @dataclass
 class ToolCard:
+    tool_id: str
     name: str
     description: str
     demo_input: list
     inputs: type[BaseModel]
     outputs: type[BaseModel]
     user_metadata: dict
+
+    def get_metadata(self):
+        return {
+            "tool_id": self.tool_id,
+            "tool_name": self.name,
+            "tool_description": self.description,
+            "input_type_json_schema": self.inputs.model_json_schema(),
+            "output_type_json_schema": self.outputs.model_json_schema(),
+            "user_metadata": self.user_metadata,
+            "demo_input": self.demo_input,
+        }
     
     
 
@@ -58,6 +70,6 @@ def create_tool_class(tool: Tool) -> type[BaseAgent]:
             "on_message_impl": on_message_impl
         }
 
-        ToolCls = type(tool.card.name, (BaseAgent,), class_dict)
+        ToolCls = type(tool.card.tool_id, (BaseAgent,), class_dict)
 
         return ToolCls

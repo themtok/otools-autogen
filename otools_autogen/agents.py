@@ -12,11 +12,15 @@ from autogen_core import (
     MessageContext,
     BaseAgent)
 
+import json
+
+from .tools import ToolCard, Tool
 
 
 
 
-from .utils import only_direct, logger
+
+from .utils import only_direct, logger, llm_logger
 
 
 if TYPE_CHECKING:
@@ -27,12 +31,9 @@ if TYPE_CHECKING:
 class QueryAnalyzerRequest():
     user_query: str
     images: list[str]
+    image_infos: list[Dict[str, Any]]
     all_tools_names: list[str]
-    all_tools_description: list[str]
-
-@dataclass
-class QueryAnalyzerResponse():
-    message: str
+    all_tools_medatada: list[str]
 
 
 @dataclass
@@ -47,9 +48,7 @@ class ActionPredictorRequest():
     actions_history: list[str]
     
 
-@dataclass
-class ActionPredictorResponse():
-    message: str
+
     
 
 @dataclass
@@ -62,19 +61,30 @@ class CommandGeneratorRequest():
     tool_metadata: str
     context: str
 
+
     
+
 @dataclass
-class CommangGeneratorResponse():
-    message: str
-    
+class ContextVerifierRequest():
+    question: str
+    image_info: str
+    available_tools: list[str]
+    toolbox_metadata: list[str]
+    query_analysis: str
+    memory: str
+    image_paths: list[str]
+
 @dataclass
-class CommandExecutorResponse():
-    message: str
+class FinalOutputRequest():
+    question: str
+    image_info: list[str]
+    memory: str
+    image_paths: list[str]
+
     
-@dataclass
-class ContextVerifierResponse():
-    message: str
     
+    
+
 class QueryAnalysisLLMResponse(BaseModel):
         concise_summary: str
         required_skills: str
@@ -95,29 +105,22 @@ class QueryAnalysisLLMResponse(BaseModel):
     {self.additional_considerations}
     """
 
-class ToolCommand(BaseModel):
+class ToolCommandLLMResponse(BaseModel):
     analysis: str
     explanation: str
-    command: str
+    argument: str
 
-class NextStepLLMResponse(BaseModel):
+class ActionPredictonLLMResponse(BaseModel):
     justification: str
     context: str
     sub_goal: str
     tool_name: str    
-
-class QueryAnalyzer(BaseAgent):
-    def __init__(self):
-        super().__init__("QueryAnalyzer")
-        logger.debug(f"QueryAnalyzer initialized. {str(self)} {self.id}")
-        
-    @only_direct
-    async def on_message_impl(self, message:QueryAnalyzerRequest, ctx: MessageContext)->None:
-        logger.debug(f"QueryAnalyzer {self.id} received message: {message}")
-        await self.analyze(message)
-        return QueryAnalyzerResponse(message="QueryAnalyzer response")
     
-    def get_image_info(self, image_path: str) -> Dict[str, Any]:
+class ContextVerifierLLMResponse(BaseModel):
+    analysis: str
+    stop_signal: bool
+
+def get_image_info(image_path: str) -> Dict[str, Any]:
         image_info = {}
         if image_path and os.path.isfile(image_path):
             image_info["image_path"] = image_path
@@ -131,21 +134,28 @@ class QueryAnalyzer(BaseAgent):
             except Exception as e:
                 print(f"Error processing image file: {str(e)}")
         return image_info
+
+
+
+class QueryAnalyzer(BaseAgent):
+    def __init__(self):
+        super().__init__("QueryAnalyzer")
+        logger.debug(f"QueryAnalyzer initialized. {str(self)} {self.id}")
+        
+    @only_direct
+    async def on_message_impl(self, message:QueryAnalyzerRequest, ctx: MessageContext)->None:
+        logger.debug(f"QueryAnalyzer {self.id} received message: {message}")
+        return await self.analyze(message)
     
     async def analyze(self, message:QueryAnalyzerRequest)->QueryAnalysisLLMResponse:
         question = message.user_query
-        
-        
-        image_infos = [self.get_image_info(image_path) for image_path in message.images]
-        image_infos_str = "\n".join([f"Image: {info['image_path']}, Width: {info['width']}, Height: {info['height']}" for info in image_infos])
-        
-        
+        image_infos_str = "\n".join([f"Image: {info['image_path']}, Width: {info['width']}, Height: {info['height']}" for info in message.image_infos])
         query_prompt = f"""
 Task: Analyze the given query with accompanying inputs and determine the skills and tools needed to address it effectively.
 
 Available tools: {message.all_tools_names}
 
-Metadata for the tools: {message.all_tools_description}
+Metadata for the tools: {message.all_tools_medatada}
 
 Image: {image_infos_str}
 
@@ -165,7 +175,9 @@ Your response should include:
 4. Any additional considerations that might be important for addressing the query effectively.
 
 Please present your analysis in a clear, structured format.
-"""
+""" 
+        llm_logger.debug(f"[QueryAnalyzer] LLM prompt: {query_prompt}")
+
         client = AsyncOpenAI(api_key=os.getenv("OPEN_AI_API_KEY"))
         images_b64content = []
         for image_path in message.images:
@@ -185,12 +197,10 @@ Please present your analysis in a clear, structured format.
             response_format=QueryAnalysisLLMResponse)
         llm_response = completion.choices[0].message.parsed
         
-        logger.debug(f"LLM response: {llm_response}")
+        llm_logger.debug(f"[QueryAnalyzer] LLM response: {llm_response}")
         return llm_response
         
         
-           
-
         
         
     
@@ -202,15 +212,29 @@ class Orchestrator(BaseAgent):
         logger.debug(f"Orchestrator initialized. {str(self)} {self.id}")
         
         self._manager = manager
+        
+    
     
     async def on_message_impl(self, message:"UserRequest", ctx: MessageContext)->None:
         session_id = None
         if not ctx.topic_id is None:
             session_id = ctx.topic_id.source
         logger.debug(f"Orchestrator {self.id} received message: {message} with topic id: {session_id}")
-        query_analysis = await self.query_analyze(message, session_id)
+        image_infos = [get_image_info(image_path) for image_path in message.files]
+        all_tools = self._manager.get_tool_cards()
+        all_tools_names = list(all_tools.keys())
+        all_tools_metadata = [tool.get_metadata() for tool in all_tools.values()]
+        qar = QueryAnalyzerRequest(
+            user_query=message.message, 
+            images=message.files, 
+            image_infos=image_infos,
+            all_tools_names=all_tools_names, 
+            all_tools_medatada=all_tools_metadata
+            )
+        query_analysis:QueryAnalysisLLMResponse = await self.send_message(qar, AgentId(type="QueryAnalyzer", key=session_id))
         step_no = 0
-        actions_history = []
+        actions_history = {}
+        conclusion = False
         while step_no < message.max_steps:
             step_no += 1
             action_predictor_request = ActionPredictorRequest(
@@ -220,19 +244,63 @@ class Orchestrator(BaseAgent):
                 step_count=step_no,
                 max_step_count=message.max_steps,
                 aviailable_tools=list(self._manager.get_tool_cards().keys()),
-                aviailable_tools_metadata=[tool.description for tool in self._manager.get_tool_cards().values()],
+                aviailable_tools_metadata=[tool.get_metadata() for tool in self._manager.get_tool_cards().values()],
                 actions_history=actions_history
             )
-            action_predictor_response = await self.send_message(action_predictor_request, AgentId(type="ActionPredictor", key=session_id))
+            action_predictor_response:ActionPredictonLLMResponse = await self.send_message(action_predictor_request, AgentId(type="ActionPredictor", key=session_id))
+            selected_tool_card:ToolCard = self._manager.get_tool_cards()[action_predictor_response.tool_name]
+            selected_tool_id = selected_tool_card.tool_id
+            selected_tool_metadata = selected_tool_card.get_metadata()
+            cgr = CommandGeneratorRequest(
+                initial_query=message.message,
+                query_analysis=query_analysis,
+                context=action_predictor_response.context,
+                sub_goal=action_predictor_response.sub_goal,
+                tool_name=action_predictor_response.tool_name,
+                tool_metadata=selected_tool_metadata,
+                image_paths=message.files
+            )
+            command_response:ToolCommandLLMResponse = await self.send_message(cgr, AgentId(type="CommandGenerator", key=session_id))
+            parsed_arg = json.loads(command_response.argument)
+            invocation_arg = selected_tool_card.inputs.model_validate(parsed_arg)
+            tool_result = await self.send_message(invocation_arg, AgentId(type=selected_tool_id, key=session_id))
+            actions_history[f"Step {step_no}"] = {
+                "tool_name": action_predictor_response.tool_name,
+                "sub_goal": action_predictor_response.sub_goal,
+                "argument": command_response.argument,
+                "result": tool_result
+            }
+            
+            cvr = ContextVerifierRequest(
+                image_paths=message.files,
+                question=message.message,
+                image_info=image_infos,
+                available_tools=all_tools_names,
+                toolbox_metadata=all_tools_metadata,
+                query_analysis=query_analysis,
+                memory=actions_history
+            )
+            context_verifier_result = await self.send_message(cvr, AgentId(type="ContextVerifier", key=session_id))
+            if context_verifier_result.stop_signal:
+                conclusion = True
+                break
+        final_output_request = FinalOutputRequest(
+            question=message.message,
+            image_info=image_infos,
+            memory=actions_history,
+            image_paths=message.files
+        )
+        final_output = await self.send_message(final_output_request, AgentId(type="FinalOutputAgent", key=session_id)) 
+        print(f"Final output: {final_output}")           
+
+            
+            
+            
+
                 
         
         
-    async def query_analyze(self,message:"UserRequest", session_id:str)->None:
-        all_tools = self._manager.get_tool_cards()
-        all_tools_names = list(all_tools.keys())
-        all_tools_description = [tool.description for tool in all_tools.values()]
-        qar = QueryAnalyzerRequest(user_query=message.message, images=message.files, all_tools_names=all_tools_names, all_tools_description=all_tools_description)
-        response = await self.send_message(qar, AgentId(type="QueryAnalyzer", key=session_id))
+    
         
     
 
@@ -307,6 +375,7 @@ Example (do not copy, use only as reference):
 <sub_goal>: Detect and count the number of specific objects in the image "example/image.jpg"
 <tool_name>: Object_Detector_Tool
 """
+        llm_logger.debug(f"[ActionPredictor] LLM prompt: {query_prompt}")
         client = AsyncOpenAI(api_key=os.getenv("OPEN_AI_API_KEY"))
        
         input=[{
@@ -318,10 +387,11 @@ Example (do not copy, use only as reference):
         completion = await client.beta.chat.completions.parse(
             model="gpt-4o",
             messages=input,
-            response_format=NextStepLLMResponse)
+            response_format=ActionPredictonLLMResponse)
         llm_response = completion.choices[0].message.parsed
         
-        logger.debug(f"LLM response: {llm_response}")
+        llm_logger.debug(f"[ActionPredictor] LLM response: {llm_response}")
+        
         return llm_response
         
         
@@ -334,11 +404,11 @@ class CommandGenerator(BaseAgent):
     @only_direct        
     async def on_message_impl(self, message:CommandGeneratorRequest, ctx: MessageContext)->None:
         logger.debug(f"CommandGenerator {self.id} received UserRequest message: {message} ")
-        return CommangGeneratorResponse(message="CommandGenerator response")
+        return await self.generate_command(message)
     
     async def generate_command(self, message:CommandGeneratorRequest)->str:
         query_prompt =  f"""
-Task: Generate a precise command to execute the selected tool based on the given information.
+Task: Generate a precise argument to execute the selected tool based on the given information.
 
 Query: {message.initial_query}
 Image: {",".join(message.image_paths)}
@@ -349,104 +419,240 @@ Tool Metadata: {message.tool_metadata}
 
 Instructions:
 1. Carefully review all provided information: the query, image path, context, sub-goal, selected tool, and tool metadata.
-2. Analyze the tool's input_types from the metadata to understand required and optional parameters.
-3. Construct a command or series of commands that aligns with the tool's usage pattern and addresses the sub-goal.
+2. Analyze the tool's input_type_json_schema from the metadata to understand required and optional parameters.
+3. Construct a argument for tool execution aligns with the tool's usage pattern and addresses the sub-goal.
 4. Ensure all required parameters are included and properly formatted.
 5. Use appropriate values for parameters based on the given context, particularly the `Context` field which may contain relevant information from previous steps.
-6. If multiple steps are needed to prepare data for the tool, include them in the command construction.
 
 Output Format:
-<analysis>: a step-by-step analysis of the context, sub-goal, and selected tool to guide the command construction.
-<explanation>: a detailed explanation of the constructed command(s) and their parameters.
-<command>: the Python code to execute the tool, which can be one of the following types:
-    a. A single line command with `execution = tool.execute()`.
-    b. A multi-line command with complex data preparation, ending with `execution = tool.execute()`.
-    c. Multiple lines of `execution = tool.execute()` calls for processing multiple items.
-```python
-<your command here>
+<analysis>: a step-by-step analysis of the context, sub-goal, and selected tool to guide the argument construction.
+<explanation>: a detailed explanation of the constructed argument and their parameters.
+<argument>: the json object that should be used to execute the tool, which can be one of the following types:
+    
+```json
+<your argument here>
 ```
 
 Rules:
-1. The command MUST be valid Python code and include at least one call to `tool.execute()`.
-2. Each `tool.execute()` call MUST be assigned to the 'execution' variable in the format `execution = tool.execute(...)`.
-3. For multiple executions, use separate `execution = tool.execute()` calls for each execution.
-4. The final output MUST be assigned to the 'execution' variable, either directly from `tool.execute()` or as a processed form of multiple executions.
-5. Use the exact parameter names as specified in the tool's input_types.
-6. Enclose string values in quotes, use appropriate data types for other values (e.g., lists, numbers).
-7. Do not include any code or text that is not part of the actual command.
-8. Ensure the command directly addresses the sub-goal and query.
-9. Include ALL required parameters, data, and paths to execute the tool in the command itself.
-10. If preparation steps are needed, include them as separate Python statements before the `tool.execute()` calls.
+1. The argument MUST be signle valid json object.
+2. Use the exact fileds names as specified in the tool's input_types_json_schema.
+3. Enclose string values in quotes, use appropriate data types for other values (e.g., lists, numbers).
+4. Do not include any code, json objects or text that is not part of the actual argument.
+5. Ensure the argument directly addresses the sub-goal and query.
+6. Include ALL required parameters, data, and paths to execute the tool in the argument itself.
 
 Examples (Not to use directly unless relevant):
-xample 1 (Single line command):
+Example 1:
 <analysis>: The tool requires an image path and a list of labels for object detection.
 <explanation>: We pass the image path and a list containing "baseball" as the label to detect.
-<command>:
-```python
-execution = tool.execute(image="path/to/image", labels=["baseball"])
+<argument>:
+```json
+{{"image":"path/to/image", labels:["baseball"])}}
 ```
 
-Example 2 (Multi-line command with data preparation):
-<analysis>: The tool requires an image path, multiple labels, and a threshold for object detection.
-<explanation>: We prepare the data by defining variables for the image path, labels, and threshold, then pass these to the tool.execute() function.
-<command>:
-```python
-image = "path/to/image"
-labels = ["baseball", "football", "basketball"]
-threshold = 0.5
-execution = tool.execute(image=image, labels=labels, threshold=threshold)
+Example 2:
+<analysis>: The tool requires and name and surname of user together with his age.
+<explanation>: We pass name and surname of user together with his age in argument .
+<argument>:
+```json
+{{"image":"path/to/image", labels:["baseball"])}}
 ```
 
-Example 3 (Multiple executions):
-<analysis>: We need to process multiple images for baseball detection.
-<explanation>: We call the tool for each image path, using the same label and threshold for all.
-<command>:
-```python
-execution = tool.execute(image="path/to/image1", labels=["baseball"], threshold=0.5)
-execution = tool.execute(image="path/to/image2", labels=["baseball"], threshold=0.5)
-execution = tool.execute(image="path/to/image3", labels=["baseball"], threshold=0.5)
-```
+
+
 
 Some Wrong Examples:
-<command>:
-```python
-execution1 = tool.execute(query="...")
-execution2 = tool.execute(query="...")
+<argument>:
+```json
+not a valid json //
 ```
-Reason: only `execution = tool.execute` is allowed, not `execution1` or `execution2`.
+Reason: not a valid json object.
 
-<command>:
-```python
-urls = [
-    "https://example.com/article1",
-    "https://example.com/article2"
-]
-
-execution = tool.execute(url=urls[0])
-execution = tool.execute(url=urls[1])
+<argument>:
+```json
+{{"image":"path/to/image"}}
+{{"labels":["baseball"]}}
 ```
-Reason: The command should process multiple items in a single execution, not separate executions for each item.
+Reason: Multiple json objects are not allowed.
 
-Remember: Your <command> field MUST be valid Python code including any necessary data preparation steps and one or more `execution = tool.execute(` calls, without any additional explanatory text. The format `execution = tool.execute` must be strictly followed, and the last line must begin with `execution = tool.execute` to capture the final output.
-"""
+Remember: Your <argument> field MUST be valid json object"""
+        llm_logger.debug(f"[CommandGenerator] LLM prompt: {query_prompt}")
+        client = AsyncOpenAI(api_key=os.getenv("OPEN_AI_API_KEY"))
+       
+        input=[{
+                "role": "user",
+                "content": [
+                    {"type": "text", "text": query_prompt},
+                ]
+            }]
+        completion = await client.beta.chat.completions.parse(
+            model="gpt-4o",
+            messages=input,
+            response_format=ToolCommandLLMResponse)
+        llm_response = completion.choices[0].message.parsed
+        llm_logger.debug(f"[CommandGenerator] LLM response: {llm_response}")
+        
+        logger.debug(f"LLM response: {llm_response}")
+        return llm_response
     
-class CommandExecutor(BaseAgent):
-    def __init__(self):
-        super().__init__("CommandExecutor")
-        logger.debug(f"CommandExecutor initialized. {str(self)} {self.id}")
-    @only_direct    
-    async def on_message_impl(self, message:Any, ctx: MessageContext)->None:
-        logger.debug(f"CommandExecutor {self.id} received  message: {message}")
-        return CommandExecutorResponse(message="CommandExecutor response")
     
 class ContextVerifier(BaseAgent):
     def __init__(self):
         super().__init__("ContextVerifier")
         logger.debug(f"ContextVerifier initialized. {str(self)} {self.id}")
+    
+    
     @only_direct        
-    async def on_message_impl(self, message:Any, ctx: MessageContext)->None:
+    async def on_message_impl(self, message:ContextVerifierRequest, ctx: MessageContext)->None:
         logger.debug(f"ContextVerifier {self.id} received message: {message} ")
-        return ContextVerifierResponse(message="ContextVerifier response")
+        return await self.verify(message)
+    
+    async def verify(self, message:ContextVerifierRequest)->str:
+        query_prompt =  f"""
+Task: Thoroughly evaluate the completeness and accuracy of the memory for fulfilling the given query, considering the potential need for additional tool usage.
 
+Context:
+Query: {message.question}
+Image: {message.image_info}
+Available Tools: {message.available_tools}
+Toolbox Metadata: {message.toolbox_metadata}
+Initial Analysis: {message.query_analysis}
+Memory (tools used and results): {message.memory}
+
+Detailed Instructions:
+1. Carefully analyze the query, initial analysis, and image (if provided):
+   - Identify the main objectives of the query.
+   - Note any specific requirements or constraints mentioned.
+   - If an image is provided, consider its relevance and what information it contributes.
+
+2. Review the available tools and their metadata:
+   - Understand the capabilities and limitations and best practices of each tool.
+   - Consider how each tool might be applicable to the query.
+
+3. Examine the memory content in detail:
+   - Review each tool used and its execution results.
+   - Assess how well each tool's output contributes to answering the query.
+
+4. Critical Evaluation (address each point explicitly):
+   a) Completeness: Does the memory fully address all aspects of the query?
+      - Identify any parts of the query that remain unanswered.
+      - Consider if all relevant information has been extracted from the image (if applicable).
+
+   b) Unused Tools: Are there any unused tools that could provide additional relevant information?
+      - Specify which unused tools might be helpful and why.
+
+   c) Inconsistencies: Are there any contradictions or conflicts in the information provided?
+      - If yes, explain the inconsistencies and suggest how they might be resolved.
+
+   d) Verification Needs: Is there any information that requires further verification due to tool limitations?
+      - Identify specific pieces of information that need verification and explain why.
+
+   e) Ambiguities: Are there any unclear or ambiguous results that could be clarified by using another tool?
+      - Point out specific ambiguities and suggest which tools could help clarify them.
+
+5. Final Determination:
+   Based on your thorough analysis, decide if the memory is complete and accurate enough to generate the final output, or if additional tool usage is necessary.
+
+Response Format:
+<analysis>: Provide a detailed analysis of why the memory is sufficient. Reference specific information from the memory and explain its relevance to each aspect of the task. Address how each main point of the query has been satisfied.
+<stop_signal>: Whether to stop the problem solving process and proceed to generating the final output.
+    * "True": if the memory is sufficient for addressing the query to proceed and no additional available tools need to be used. If ONLY manual verification without tools is needed, choose "True".
+    * "False": if the memory is insufficient and needs more information from additional tool usage.
+"""
+        client = AsyncOpenAI(api_key=os.getenv("OPEN_AI_API_KEY"))
+        images_b64content = []
+        for image_path in message.image_paths:
+            with open(image_path, "rb") as image_file:
+                images_b64content.append(image_file.read())
+        images_part = [{"type": "input_image", "image_url": f"data:image/png;base64,{b64_image}"} for b64_image in images_b64content]
         
+        input=[{
+                "role": "user",
+                "content": [
+                    {"type": "text", "text": query_prompt},
+                ]+images_part,
+            }]
+        completion = await client.beta.chat.completions.parse(
+            model="gpt-4o",
+            messages=input,
+            response_format=ContextVerifierLLMResponse)
+        llm_response = completion.choices[0].message.parsed
+        
+        llm_logger.debug(f"[ContextVerifier] LLM response: {llm_response}")
+        return llm_response
+
+class FinalOutputAgent(BaseAgent):
+    def __init__(self):
+        super().__init__("FinalOutputAgent")
+        logger.debug(f"FinalOutputAgent initialized. {str(self)} {self.id}")
+    
+    
+    @only_direct        
+    async def on_message_impl(self, message:FinalOutputRequest, ctx: MessageContext)->None:
+        logger.debug(f"FinalOutputAgent {self.id} received message: {message} ")
+        return await self.generate(message)
+    
+    
+    async def generate(self, message:FinalOutputRequest)->str:
+        query_prompt =  f"""Task: Generate the final output based on the query, image, and tools used in the process.
+
+Context:
+Query: {message.question}
+Image: {message.image_info}
+Actions Taken:
+{message.memory}
+
+Instructions:
+1. Review the query, image, and all actions taken during the process.
+2. Consider the results obtained from each tool execution.
+3. Incorporate the relevant information from the memory to generate the step-by-step final output.
+4. The final output should be consistent and coherent using the results from the tools.
+
+Output Structure:
+Your response should be well-organized and include the following sections:
+
+1. Summary:
+   - Provide a brief overview of the query and the main findings.
+
+2. Detailed Analysis:
+   - Break down the process of answering the query step-by-step.
+   - For each step, mention the tool used, its purpose, and the key results obtained.
+   - Explain how each step contributed to addressing the query.
+
+3. Key Findings:
+   - List the most important discoveries or insights gained from the analysis.
+   - Highlight any unexpected or particularly interesting results.
+
+4. Answer to the Query:
+   - Directly address the original question with a clear and concise answer.
+   - If the query has multiple parts, ensure each part is answered separately.
+
+5. Additional Insights (if applicable):
+   - Provide any relevant information or insights that go beyond the direct answer to the query.
+   - Discuss any limitations or areas of uncertainty in the analysis.
+
+6. Conclusion:
+   - Summarize the main points and reinforce the answer to the query.
+   - If appropriate, suggest potential next steps or areas for further investigation."""
+   
+   
+        client = AsyncOpenAI(api_key=os.getenv("OPEN_AI_API_KEY"))
+        images_b64content = []
+        for image_path in message.image_paths:
+            with open(image_path, "rb") as image_file:
+                images_b64content.append(image_file.read())
+        images_part = [{"type": "input_image", "image_url": f"data:image/png;base64,{b64_image}"} for b64_image in images_b64content]
+        
+        input=[{
+                "role": "user",
+                "content": [
+                    {"type": "text", "text": query_prompt},
+                ]+images_part,
+            }]
+        completion = await client.chat.completions.create(
+            model="gpt-4o",
+            messages=input)
+        llm_response = completion.choices[0].message.content
+        
+        llm_logger.debug(f"[FinalOutputAgent] LLM response: {llm_response}")
+        return llm_response

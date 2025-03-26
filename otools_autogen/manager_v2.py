@@ -5,7 +5,6 @@ import asyncio
 from functools import wraps
 
 from autogen_core._default_subscription import DefaultSubscription
-from collections import defaultdict
 from autogen_core._default_topic import DefaultTopicId
 import uuid
 import enum
@@ -26,7 +25,7 @@ import logging
 
 from autogen_core import TRACE_LOGGER_NAME
 
-from .agents import Orchestrator, QueryAnalyzer, ActionPredictor, CommandGenerator, CommandExecutor, ContextVerifier
+from .agents import Orchestrator, QueryAnalyzer, ActionPredictor, CommandGenerator, ContextVerifier, FinalOutputAgent
 from .utils import only_direct, logger
 
 # logging.basicConfig(level=logging.DEBUG)
@@ -112,14 +111,14 @@ class Manager:
     async def start(self):
         self.runtime = SingleThreadedAgentRuntime()
         await self._add_internal_agents(self.runtime)
-        for tool_name, tool in self._tools.items():
+        for tool_id, tool in self._tools.items():
             tool_cls = create_tool_class(tool)
             await tool_cls.register(
                 runtime=self.runtime,
-                type=tool.card.name,
+                type=tool_id,
                 factory=lambda cls=tool_cls: cls()
             )
-            subscr = DefaultSubscription(agent_type=tool.card.name)
+            subscr = DefaultSubscription(agent_type=tool_id)
             await self.runtime.add_subscription(subscr)
         
         
@@ -138,8 +137,9 @@ class Manager:
             ("QueryAnalyzer", QueryAnalyzer),
             ("ActionPredictor", ActionPredictor),
             ("CommandGenerator", CommandGenerator),
-            ("CommandExecutor", CommandExecutor),
-            ("ContextVerifier", ContextVerifier)
+            # ("CommandExecutor", CommandExecutor),
+            ("ContextVerifier", ContextVerifier),
+            ("FinalOutputAgent", FinalOutputAgent),
         ]
         
         for agent_name, agent_cls in internal_agents:
