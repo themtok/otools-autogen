@@ -8,7 +8,7 @@ from autogen_core._default_subscription import DefaultSubscription
 from autogen_core._default_topic import DefaultTopicId
 import uuid
 import enum
-from typing import Any
+from typing import Any, Optional
 from autogen_core import (
     AgentId,
     MessageContext,
@@ -53,6 +53,9 @@ class UserResponse:
     message: str
     tool_used: str
     final: bool
+    conclusion: bool
+    step_no: int
+    command: Optional[str] = None
 
 
        
@@ -149,7 +152,6 @@ class Manager:
             ("QueryAnalyzer", QueryAnalyzer),
             ("ActionPredictor", ActionPredictor),
             ("CommandGenerator", CommandGenerator),
-            # ("CommandExecutor", CommandExecutor),
             ("ContextVerifier", ContextVerifier),
             ("FinalOutputAgent", FinalOutputAgent),
         ]

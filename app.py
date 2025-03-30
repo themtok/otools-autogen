@@ -1,23 +1,18 @@
+import time
 import gradio as gr
-import asyncio
 
-async def async_process_prompt(prompt):
-    await asyncio.sleep(4) # async simulation
-    return prompt
+def slow_echo(message, history):
+    for i in range(len(message)):
+        time.sleep(0.05)
+        yield "You typed: " + message[: i + 1]
 
-async def process_prompt(prompt):
-    try:
-        return await asyncio.wait_for(async_process_prompt(prompt), timeout=6)
-    except asyncio.TimeoutError:
-        return "Processing timed out."
-
-iface = gr.Interface(
-    fn=process_prompt,
-    inputs="text",
-    outputs="text",
-    title="Async Prompt Processor with Timeout",
-    description="Enter a prompt to process asynchronously. Times out after 5 seconds.",
-    concurrency_limit=10
+demo = gr.ChatInterface(
+    slow_echo,
+    type="messages",
+    flagging_mode="manual",
+    flagging_options=["Like", "Spam", "Inappropriate", "Other"],
+    save_history=True,
 )
 
-iface.launch()
+if __name__ == "__main__":
+    demo.launch()

@@ -6,7 +6,7 @@ import wikipedia
 
 class WikipediaSearchRequest(BaseModel):
     query: str
-    max_length_of_response=2000
+    max_length_of_response:int=2000
     
 class WikipediaSearchResponse(BaseModel):
     success: bool
@@ -21,7 +21,7 @@ class WikipediaSearch(Tool):
                 name="Wikipedia search tool",
                 description="Tool for searching wikipedia.",
                 inputs=WikipediaSearchRequest,
-                outputs=WikipediaSearchResponse
+                outputs=WikipediaSearchResponse,
                 user_metadata={},
                 demo_input=[WikipediaSearchRequest(
                     query="Python"

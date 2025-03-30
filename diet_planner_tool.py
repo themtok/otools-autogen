@@ -1,56 +1,8 @@
-import asyncio
 from pydantic import BaseModel
-from otools_autogen.manager_v2 import Manager, ToolCard, UserRequest, Tool, UserResponse
-from dotenv import load_dotenv
-from colorama import Fore, Back, Style
-import wikipedia
-from wikipedia_search_tool import WikipediaSearch
-from otools_autogen.manager_v2 import UserRequest, UserResponse
-
-load_dotenv()
+from otools_autogen.tools import Tool, ToolCard
 
 
-# class WikipediaSearchRequest(BaseModel):
-#     query: str
-#     max_length_of_response:int=2000
-    
-# class WikipediaSearchResponse(BaseModel):
-#     success: bool
-#     search_results: str
-    
-
-# class WikipediaSearch(Tool):
-#         @property
-#         def card(self) -> ToolCard:
-#             return ToolCard(
-#                 tool_id="WikipediaSearchTool",
-#                 name="Wikipedia search tool",
-#                 description="Tool for searching wikipedia.",
-#                 inputs=WikipediaSearchRequest,
-#                 outputs=WikipediaSearchResponse,
-#                 user_metadata={},
-#                 demo_input=[WikipediaSearchRequest(
-#                     query="Python"
-#                 ), WikipediaSearchRequest(
-#                     query="Washington"
-#                 )])
-            
-#         async def run(self, inputs: WikipediaSearchRequest) -> WikipediaSearchResponse:
-#             search_results = wikipedia.search(inputs.query)
-#             if not search_results:
-#                 return WikipediaSearchResponse(success=False, search_results=None)
-#             page = wikipedia.page(search_results[0])
-#             text = page.content
-
-#             if inputs.max_length_of_response is not None:
-#                 text = text[:inputs.max_length_of_response]
-#             return WikipediaSearchResponse(success=True, search_results=text) 
-        
-        
-        
-async def m():
-        m = Manager()
-        class DietPlanningTool(Tool):
+class DietPlanningTool(Tool):
             class DietPlanningToolInput(BaseModel):
                 age: int
                 weight: float
@@ -132,34 +84,3 @@ async def m():
                 Dinner: 4 oz of grilled salmon with 1 cup of quinoa and 1 cup of steamed broccoli
                 """
                 return DietPlanningTool.DietPlanningToolOutput(diet_plan=diet_plan_for_diabetic)
-        
-        m.register_tool("DietComposerTool", DietPlanningTool)
-        m.register_tool("WikipediaSearchTool", WikipediaSearch)
-
-        
-        
-        await m.start()
-        print("Manager started.")
-        sid = await m.send_message(UserRequest(message="How many islands US have?", files=[]))
-        print(f"---------------Session id: {sid}")
-        async for msg in m.stream(sid):
-            mm:UserResponse = msg
-            print(Fore.GREEN + f"Response message: {mm.message}" + Style.RESET_ALL)
-            print(Fore.BLUE + f"Response tool_used: {mm.tool_used}" + Style.RESET_ALL)
-            print(Fore.RED + f"Response command: {mm.command}" + Style.RESET_ALL)
-            print(Fore.RED + f"Response Step#: {mm.step_no}" + Style.RESET_ALL)
-            print(Fore.RED + f"Response conclusion: {mm.conclusion}" + Style.RESET_ALL)
-            print(Fore.RED + f"Response final: {mm.final}" + Style.RESET_ALL)
-
-            
-
-        # sid2 = await m.send_message(UserRequest(message="Hello", files=["file1", "file2"]))
-        # print(f"----------------Session id: {sid2}")
-        # await m.send_message(UserRequest2(message="Hello2", files=["file1", "file2"]), session_id=sid2)
-        # await m.send_message(message="dupa", session_id=sid2)
-        
-        await m.stop(True)
-
-
-
-asyncio.run(m())

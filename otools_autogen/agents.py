@@ -204,7 +204,15 @@ class Orchestrator(BaseAgent):
                 parsed_arg = json.loads(command_response.argument)
                 invocation_arg = selected_tool_card.inputs.model_validate(parsed_arg)
                 tool_result = await self.send_message(invocation_arg, AgentId(type=selected_tool_id, key=session_id))
-                to_client_queue.put_nowait(UserResponse(session_id=session_id, message=action_predictor_response.sub_goal, tool_used=selected_tool_id, final=False))
+                to_client_queue.put_nowait(UserResponse(
+                    session_id=session_id, 
+                    message=action_predictor_response.sub_goal, 
+                    command=command_response.argument,
+                    tool_used=selected_tool_id, 
+                    final=False,
+                    conclusion=False,
+                    step_no=step_no
+                    ))
                 actions_history[f"Step {step_no}"] = {
                     "tool_name": action_predictor_response.tool_name,
                     "sub_goal": action_predictor_response.sub_goal,
@@ -218,7 +226,14 @@ class Orchestrator(BaseAgent):
                     "argument": command_response.argument,
                     "result": f"Error executing tool: {str(e)}"
                 }
-                to_client_queue.put_nowait(UserResponse(session_id=session_id, message=f"Error executing tool: {str(e)}", tool_used=selected_tool_id, final=False))
+                to_client_queue.put_nowait(UserResponse(
+                    session_id=session_id, 
+                    message=f"Error executing tool: {str(e)}", 
+                    tool_used=selected_tool_id, 
+                    command=command_response.argument,
+                    final=False,
+                    conclusion=False,
+                    step_no=step_no))
                 continue
                 
             
@@ -243,7 +258,13 @@ class Orchestrator(BaseAgent):
             query_analysis=query_analysis
         )
         final_output = await self.send_message(final_output_request, AgentId(type="FinalOutputAgent", key=session_id)) 
-        to_client_queue.put_nowait(UserResponse(session_id=session_id, message=final_output, tool_used=None, final=True))         
+        to_client_queue.put_nowait(UserResponse(
+            session_id=session_id, 
+            message=final_output, 
+            tool_used=None, 
+            final=True,
+            conclusion=conclusion,
+            step_no=step_no))         
 
             
             
@@ -288,7 +309,7 @@ Please present your analysis in a clear, structured format.
 """ 
         llm_logger.debug(f"[QueryAnalyzer] LLM prompt: {query_prompt}")
 
-        client = AsyncOpenAI(api_key=os.getenv("OPEN_AI_API_KEY"))
+        client = AsyncOpenAI(api_key=os.getenv("OPENROUTER_API_KEY"), base_url=os.getenv("OPENROUTER_BASE_PATH"))
         images_b64content = []
         for image_path in message.images:
             with open(image_path, "rb") as image_file:
