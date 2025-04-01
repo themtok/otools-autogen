@@ -17,7 +17,7 @@ def only_direct(func):
 
 logger = logging.getLogger("otools_autogen")
 logger.addHandler(logging.StreamHandler())
-logger.setLevel(logging.DEBUG)
+logger.setLevel(logging.ERROR)
 
 
 llm_logger = logging.getLogger("otools_autogen_llm")
