@@ -400,7 +400,7 @@ Example (do not copy, use only as reference):
 <tool_name>: Object_Detector_Tool
 """
         llm_logger.debug(f"[ActionPredictor] LLM prompt: {query_prompt}")
-        client = AsyncOpenAI(api_key=os.getenv("OPEN_AI_API_KEY"))
+        client = AsyncOpenAI(api_key=os.getenv("OPENROUTER_API_KEY"), base_url=os.getenv("OPENROUTER_BASE_PATH"))
        
         input=[{
                 "role": "user",
@@ -501,7 +501,7 @@ Reason: Multiple json objects are not allowed.
 
 Remember: Your <argument> field MUST be valid json object"""
         llm_logger.debug(f"[CommandGenerator] LLM prompt: {query_prompt}")
-        client = AsyncOpenAI(api_key=os.getenv("OPEN_AI_API_KEY"))
+        client = AsyncOpenAI(api_key=os.getenv("OPENROUTER_API_KEY"), base_url=os.getenv("OPENROUTER_BASE_PATH"))
        
         input=[{
                 "role": "user",
@@ -583,7 +583,7 @@ Response Format:
     * "True": if the memory is sufficient for addressing the query to proceed and no additional available tools need to be used. If ONLY manual verification without tools is needed, choose "True".
     * "False": if the memory is insufficient and needs more information from additional tool usage.
 """
-        client = AsyncOpenAI(api_key=os.getenv("OPEN_AI_API_KEY"))
+        client = AsyncOpenAI(api_key=os.getenv("OPENROUTER_API_KEY"), base_url=os.getenv("OPENROUTER_BASE_PATH"))
         images_b64content = []
         for image_path in message.image_paths:
             with open(image_path, "rb") as image_file:
@@ -673,7 +673,7 @@ Answer:
 """
    
         llm_logger.debug(f"[FinalOutputAgent] LLM prompt: {prompt_generate_final_output}")
-        client = AsyncOpenAI(api_key=os.getenv("OPEN_AI_API_KEY"))
+        client = AsyncOpenAI(api_key=os.getenv("OPENROUTER_API_KEY"), base_url=os.getenv("OPENROUTER_BASE_PATH"))
         images_b64content = []
         for image_path in message.image_paths:
             with open(image_path, "rb") as image_file:
