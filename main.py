@@ -8,6 +8,9 @@ from wikipedia_search_tool import WikipediaSearch
 from otools_autogen.manager_v2 import UserRequest, UserResponse
 from search_engine_tool import SearchEngineTool
 from page_content_extractor import PageContentExtractionTool
+from diet_planner_tool import DietPlanningTool
+from news_fetch_tool import NewsFetchTool
+
 load_dotenv()
 
 
@@ -20,6 +23,9 @@ async def m():
         m.register_tool("WikipediaSearchTool", WikipediaSearch)
         m.register_tool("SearchEngineTool", SearchEngineTool)
         m.register_tool("PageContentExtractionTool", PageContentExtractionTool)
+        m.register_tool("NewsFetchTool", NewsFetchTool)
+
+
         
         
         await m.start()
