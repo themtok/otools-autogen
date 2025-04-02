@@ -49,6 +49,7 @@ class UserRequest:
 #class for the response from the agent
 @dataclass
 class UserResponse:
+    type: str
     session_id: str
     message: str
     tool_used: str

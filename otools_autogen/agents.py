@@ -1,4 +1,5 @@
 from dataclasses import dataclass
+from datetime import datetime
 from pydantic import BaseModel
 import asyncio
 from PIL import Image
@@ -202,9 +203,20 @@ class Orchestrator(BaseAgent):
             command_response:ToolCommandLLMResponse = await self.send_message(cgr, AgentId(type="CommandGenerator", key=session_id))
             try:
                 parsed_arg = json.loads(command_response.argument)
+                to_client_queue.put_nowait(UserResponse(
+                    type="ToolRequest",
+                    session_id=session_id, 
+                    message=action_predictor_response.sub_goal, 
+                    command=command_response.argument,
+                    tool_used=selected_tool_id, 
+                    final=False,
+                    conclusion=False,
+                    step_no=step_no
+                    ))
                 invocation_arg = selected_tool_card.inputs.model_validate(parsed_arg)
                 tool_result = await self.send_message(invocation_arg, AgentId(type=selected_tool_id, key=session_id))
                 to_client_queue.put_nowait(UserResponse(
+                    type="ToolResponse",
                     session_id=session_id, 
                     message=action_predictor_response.sub_goal, 
                     command=command_response.argument,
@@ -227,6 +239,7 @@ class Orchestrator(BaseAgent):
                     "result": f"Error executing tool: {str(e)}"
                 }
                 to_client_queue.put_nowait(UserResponse(
+                    type="Error",
                     session_id=session_id, 
                     message=f"Error executing tool: {str(e)}", 
                     tool_used=selected_tool_id, 
@@ -259,6 +272,7 @@ class Orchestrator(BaseAgent):
         )
         final_output = await self.send_message(final_output_request, AgentId(type="FinalOutputAgent", key=session_id)) 
         to_client_queue.put_nowait(UserResponse(
+            type="FinalOutput",
             session_id=session_id, 
             message=final_output, 
             tool_used=None, 
@@ -290,6 +304,8 @@ Metadata for the tools: {message.all_tools_medatada}
 
 Image: {image_infos_str}
 
+Current Date is {datetime.today().strftime('%Y-%m-%d')}
+
 Query: {question}
 
 Instructions:
@@ -298,6 +314,7 @@ Instructions:
 3. List the specific skills that would be necessary to address the query comprehensively.
 4. Examine the available tools in the toolbox and determine which ones might relevant and useful for addressing the query. Make sure to consider the user metadata for each tool, including limitations and potential applications (if available).
 5. Provide a brief explanation for each skill and tool you've identified, describing how it would contribute to answering the query.
+6. Important: remember that Current Date is {datetime.today().strftime('%Y-%m-%d')}
 
 Your response should include:
 1. A concise summary of the query's main points and objectives, as well as content in any accompanying inputs.
@@ -323,7 +340,7 @@ Please present your analysis in a clear, structured format.
                 ]+images_part,
             }]
         completion = await client.beta.chat.completions.parse(
-            model="gpt-4o",
+            model=os.getenv("OTOOLS_MODEL"),
             messages=input,
             response_format=QueryAnalysisLLMResponse)
         llm_response = completion.choices[0].message.parsed
@@ -409,7 +426,7 @@ Example (do not copy, use only as reference):
                 ]
             }]
         completion = await client.beta.chat.completions.parse(
-            model="gpt-4o",
+            model=os.getenv("OTOOLS_MODEL"),
             messages=input,
             response_format=ActionPredictonLLMResponse)
         llm_response = completion.choices[0].message.parsed
@@ -510,7 +527,7 @@ Remember: Your <argument> field MUST be valid json object"""
                 ]
             }]
         completion = await client.beta.chat.completions.parse(
-            model="gpt-4o",
+            model=os.getenv("OTOOLS_MODEL"),
             messages=input,
             response_format=ToolCommandLLMResponse)
         llm_response = completion.choices[0].message.parsed
@@ -583,6 +600,8 @@ Response Format:
     * "True": if the memory is sufficient for addressing the query to proceed and no additional available tools need to be used. If ONLY manual verification without tools is needed, choose "True".
     * "False": if the memory is insufficient and needs more information from additional tool usage.
 """
+        llm_logger.debug(f"[ContextVerifier] LLM prompt: {query_prompt}")
+
         client = AsyncOpenAI(api_key=os.getenv("OPENROUTER_API_KEY"), base_url=os.getenv("OPENROUTER_BASE_PATH"))
         images_b64content = []
         for image_path in message.image_paths:
@@ -597,7 +616,7 @@ Response Format:
                 ]+images_part,
             }]
         completion = await client.beta.chat.completions.parse(
-            model="gpt-4o",
+            model=os.getenv("OTOOLS_MODEL"),
             messages=input,
             response_format=ContextVerifierLLMResponse)
         llm_response = completion.choices[0].message.parsed
@@ -687,7 +706,7 @@ Answer:
                 ]+images_part,
             }]
         completion = await client.chat.completions.create(
-            model="gpt-4o",
+            model=os.getenv("OTOOLS_MODEL"),
             messages=input)
         llm_response = completion.choices[0].message.content
         

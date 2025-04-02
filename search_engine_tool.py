@@ -24,7 +24,9 @@ tool_card= ToolCard(
                 name="Search Engine",
                 inputs=SearchEngineRequest,
                 outputs=SearchEngingResponse,
-                user_metadata={},
+                user_metadata={
+                    "Comments": "Each result should be checked by fetching the page content and extracting the relevant information. This tool is not responsible for the accuracy of the search results.",
+                    },
                 demo_input=[
                     SearchEngineRequest(query="Python programming language"),
                     SearchEngineRequest(query="Washington"),
