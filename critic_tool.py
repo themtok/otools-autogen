@@ -22,6 +22,7 @@ tool_card= ToolCard(
                 user_metadata={
                      
                 "limitation": "The CriticTool may provide hallucinated or incorrect responses.",
+                "recommendation of usage": "The CriticTool should be used to validate the information set in terms of comprehensiveness, correctness and relevance if you are not sure about the information set. It is not recommended to use the CriticTool for generating new information or for validating information that is already known to be correct.",
 
         
                     },

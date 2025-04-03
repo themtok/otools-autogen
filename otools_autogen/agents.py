@@ -297,17 +297,11 @@ class QueryAnalyzer(BaseAgent):
         image_infos_str = "\n".join([f"Image: {info['image_path']}, Width: {info['width']}, Height: {info['height']}" for info in message.image_infos])
         query_prompt = f"""
 Task: Analyze the given query with accompanying inputs and determine the skills and tools needed to address it effectively.
-
-Available tools: {message.all_tools_names}
-
-Metadata for the tools: {message.all_tools_medatada}
-
-Image: {image_infos_str}
-
 Current Date is {datetime.today().strftime('%Y-%m-%d')}
-
+Available tools: {message.all_tools_names}
+Metadata for the tools: {message.all_tools_medatada}
+Image: {image_infos_str}
 Query: {question}
-
 Instructions:
 1. Carefully read and understand the query and any accompanying inputs.
 2. Identify the main objectives or tasks within the query.
@@ -691,7 +685,7 @@ Please generate the concise output based on the query, image information, initia
 Answer:
 """
    
-        llm_logger.debug(f"[FinalOutputAgent] LLM prompt: {prompt_generate_final_output}")
+        llm_logger.debug(f"[FinalOutputAgent] LLM prompt: {query_prompt}")
         client = AsyncOpenAI(api_key=os.getenv("OPENROUTER_API_KEY"), base_url=os.getenv("OPENROUTER_BASE_PATH"))
         images_b64content = []
         for image_path in message.image_paths:
@@ -702,7 +696,7 @@ Answer:
         input=[{
                 "role": "user",
                 "content": [
-                    {"type": "text", "text": prompt_generate_final_output},
+                    {"type": "text", "text": query_prompt},
                 ]+images_part,
             }]
         completion = await client.chat.completions.create(

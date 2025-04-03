@@ -1,12 +1,13 @@
 from pydantic import BaseModel, Field
 from otools_autogen.tools import Tool, ToolCard
-import json
-from duckduckgo_search import DDGS
 import trafilatura
-
+from openai import AsyncOpenAI
+import os
+from otools_autogen.utils import llm_logger
 
 class PageContentExtractionRequest(BaseModel):
     link: str = Field(None, description="Link to the page to extract content from")
+    main_query: str = Field(None, description="Main query that should be used to extract and summarize the content from the page")
     
 class PageContentExtractionResult(BaseModel):
     success: bool = Field(description="If page content extraction was successful this will be True")
@@ -15,14 +16,16 @@ class PageContentExtractionResult(BaseModel):
     
 tool_card= ToolCard(
                 tool_id="PageContentExtractionTool",
-                description="Tool for extracting content from the page. Returns content in markdown format. Is able to accept only one link at a time.",
+                description="Tool for extracting content from the page. Returns summarized content. Summary is done using the main query provided. Accepts only one link at a time.",
                 name="Page Content Extraction",
                 inputs=PageContentExtractionRequest,
                 outputs=PageContentExtractionResult,
-                user_metadata={},
+                user_metadata={
+                  "recommendation of usage of main_query": "The main query should be a single line and should be used to summarize the content of the page. If you don't want to use specific query, use main query provided by user.",  
+                },
                 demo_input=[
-                    PageContentExtractionRequest(link="https://en.wikipedia.org/wiki/Python_(programming_language)"),
-                    PageContentExtractionRequest(link="https://www.python.org/")          
+                    PageContentExtractionRequest(link="https://en.wikipedia.org/wiki/Python_(programming_language)", main_query="Python programming language"),
+                    PageContentExtractionRequest(link="https://www.python.org/", main_query="List comprehension in python"),          
                 ])
 
 class PageContentExtractionTool(Tool):
@@ -45,6 +48,17 @@ class PageContentExtractionTool(Tool):
                 "success": False,
                 "markdown_content": None
             })
+            
+        prompt = f"""Summarize the content of the page in markdown format. Use the main query provided to summarize the content. The main query is: {inputs.main_query}. 
+The content of the page is: {r}"""
+        llm_logger.debug(f"[PageContentExtractionTool] LLM prompt: {prompt}")
+        client = AsyncOpenAI(api_key=os.getenv("OPENROUTER_API_KEY"), base_url=os.getenv("OPENROUTER_BASE_PATH"))
+        input=[{"role": "user","content": [{"type": "text", "text": prompt}]}]
+        completion = await client.chat.completions.create(
+            model=os.getenv("PAGE_CONTENT_EXTRACTOR_SUMMARIZATION_MODEL"),
+            messages=input)
+        llm_response = completion.choices[0].message.content
+        llm_logger.debug(f"[PageContentExtractionTool] LLM response: {llm_response}")
         return PageContentExtractionResult.model_validate({
             "success": True,
             "markdown_content": r

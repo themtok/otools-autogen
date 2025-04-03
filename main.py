@@ -39,19 +39,21 @@ async def m():
         
         await m.start()
         print("Manager started.")
-        sid = await m.send_message(UserRequest(message="What is the best investment currently?",
+        sid = await m.send_message(UserRequest(message="Is happiness of countries really related to their GDP? If yes, how? If no, why not?",
                                                files=[],
                                                max_steps=10))
         print(f"---------------Session id: {sid}")
         async for msg in m.stream(sid):
             mm:UserResponse = msg
+            print(Fore.GREEN + f"===================================" + Style.RESET_ALL)
             print(Fore.GREEN + f"Type: {mm.type}" + Style.RESET_ALL)
-            print(Fore.GREEN + f"Response message: {mm.message}" + Style.RESET_ALL)
-            print(Fore.BLUE + f"Response tool_used: {mm.tool_used}" + Style.RESET_ALL)
-            print(Fore.RED + f"Response command: {mm.command}" + Style.RESET_ALL)
-            print(Fore.RED + f"Response Step#: {mm.step_no}" + Style.RESET_ALL)
-            print(Fore.RED + f"Response conclusion: {mm.conclusion}" + Style.RESET_ALL)
-            print(Fore.RED + f"Response final: {mm.final}" + Style.RESET_ALL)
+            print(Fore.GREEN + f"Message: {mm.message}" + Style.RESET_ALL)
+            print(Fore.BLUE + f"Tool_used: {mm.tool_used}" + Style.RESET_ALL)
+            print(Fore.RED + f"Tool command: {mm.command}" + Style.RESET_ALL)
+            print(Fore.RED + f"Current Step#: {mm.step_no}" + Style.RESET_ALL)
+            print(Fore.RED + f"Conclusion: {mm.conclusion}" + Style.RESET_ALL)
+            print(Fore.RED + f"Final: {mm.final}" + Style.RESET_ALL)
+            print(Fore.GREEN + f"===================================" + Style.RESET_ALL)
 
             
 
