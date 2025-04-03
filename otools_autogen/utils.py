@@ -2,7 +2,34 @@ from functools import wraps
 import logging
 from datetime import datetime
 import os
+import base64
+from PIL import Image
+from io import BytesIO
 
+
+def image_to_base64_inline(image_path: str) -> str:
+    """
+    Converts an image file to a Base64-encoded inline data URL.
+
+    Args:
+        image_path (str): The file path to the image to be converted.
+
+    Returns:
+        str: A Base64-encoded string representing the image in the format:
+             "data:image/png;base64,<base64_encoded_data>".
+
+    Raises:
+        FileNotFoundError: If the specified image file does not exist.
+        IOError: If the image file cannot be opened or processed.
+    """
+    with Image.open(image_path) as img:
+        buffered = BytesIO()
+        img.save(buffered, format="PNG")
+        img_bytes = buffered.getvalue()
+        img_base64 = base64.b64encode(img_bytes).decode('utf-8')
+        inline_base64 = f"data:image/png;base64,{img_base64}"
+        return inline_base64
+    
 
 def only_direct(func):
     """

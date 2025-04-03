@@ -5,17 +5,17 @@ from otools_autogen.runtime import Runtime, ToolCard, UserRequest, Tool, UserRes
 from dotenv import load_dotenv
 from colorama import Fore, Back, Style
 import wikipedia
-from wikipedia_search_tool import WikipediaSearch
+from tools.wikipedia_search_tool import WikipediaSearch
 from otools_autogen.runtime import UserRequest, UserResponse
-from search_engine_tool import SearchEngineTool
-from page_content_extractor import PageContentExtractionTool
-from diet_planner_tool import DietPlanningTool
-from news_fetch_tool import NewsFetchTool
-from generalist import GeneralistTool
+from tools.search_engine_tool import SearchEngineTool
+from tools.page_content_extractor import PageContentExtractionTool
+from tools.diet_planner_tool import DietPlanningTool
+from tools.news_fetch_tool import NewsFetchTool
+from tools.generalist import GeneralistTool
 import yappi
-from api_caller_tool import APICallerTool
-from news_api_tool import NewsAPITool
-from critic_tool import CriticTool
+from tools.api_caller_tool import APICallerTool
+from tools.news_api_tool import NewsAPITool
+from tools.critic_tool import CriticTool
 import logging
 import os
 
@@ -65,8 +65,8 @@ async def m():
         
         await m.start()
         print("Manager started.")
-        sid = await m.send_message(UserRequest(message="Is happiness of countries really related to their GDP? If yes, how? If no, why not?",
-                                               files=[],
+        sid = await m.send_message(UserRequest(message="Describe picture",
+                                               files=["hero-accident-exceeds-limits.png"],
                                                max_steps=10))
         print(f"---------------Session id: {sid}")
         async for msg in m.stream(sid):

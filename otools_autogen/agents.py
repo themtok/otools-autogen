@@ -22,7 +22,7 @@ from .tools import ToolCard, Tool
 
 
 
-from .utils import only_direct
+from .utils import only_direct, image_to_base64_inline
 
 llm_logger = logging.getLogger("otools_autogen_llm")
 logger = logging.getLogger("otools_autogen")
@@ -396,11 +396,7 @@ Please present your analysis in a clear, structured format.
         llm_logger.debug(f"[QueryAnalyzer] LLM prompt: {query_prompt}")
 
         client = AsyncOpenAI(api_key=os.getenv("OPENROUTER_API_KEY"), base_url=os.getenv("OPENROUTER_BASE_PATH"))
-        images_b64content = []
-        for image_path in message.images:
-            with open(image_path, "rb") as image_file:
-                images_b64content.append(image_file.read())
-        images_part = [{"type": "input_image", "image_url": f"data:image/png;base64,{b64_image}"} for b64_image in images_b64content]
+        images_part = [{"type": "image_url", "image_url": {"url": image_to_base64_inline(filename)}} for filename in message.images]
         
         input=[{
                 "role": "user",
@@ -724,12 +720,8 @@ Response Format:
         llm_logger.debug(f"[ContextVerifier] LLM prompt: {query_prompt}")
 
         client = AsyncOpenAI(api_key=os.getenv("OPENROUTER_API_KEY"), base_url=os.getenv("OPENROUTER_BASE_PATH"))
-        images_b64content = []
-        for image_path in message.image_paths:
-            with open(image_path, "rb") as image_file:
-                images_b64content.append(image_file.read())
-        images_part = [{"type": "input_image", "image_url": f"data:image/png;base64,{b64_image}"} for b64_image in images_b64content]
-        
+        images_part = [{"type": "image_url", "image_url": {"url": image_to_base64_inline(fnmae)}} for fnmae in message.images]
+
         input=[{
                 "role": "user",
                 "content": [
@@ -814,11 +806,7 @@ Answer:
    
         llm_logger.debug(f"[FinalOutputAgent] LLM prompt: {query_prompt}")
         client = AsyncOpenAI(api_key=os.getenv("OPENROUTER_API_KEY"), base_url=os.getenv("OPENROUTER_BASE_PATH"))
-        images_b64content = []
-        for image_path in message.image_paths:
-            with open(image_path, "rb") as image_file:
-                images_b64content.append(image_file.read())
-        images_part = [{"type": "input_image", "image_url": f"data:image/png;base64,{b64_image}"} for b64_image in images_b64content]
+        images_part = [{"type": "image_url", "image_url": {"url": image_to_base64_inline(fnmae)}} for fnmae in message.images]
         
         input=[{
                 "role": "user",
