@@ -1,5 +1,5 @@
 from shiny.express import ui, render
-from otools_autogen.manager_v2 import Manager, UserRequest, UserResponse
+from otools_autogen.runtime import Manager, UserRequest, UserResponse
 from news_fetch_tool import NewsFetchTool
 from diet_planner_tool import DietPlanningTool
 from wikipedia_search_tool import WikipediaSearch

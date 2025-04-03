@@ -2,8 +2,9 @@ from pydantic import BaseModel, Field
 from otools_autogen.tools import Tool, ToolCard
 from openai import AsyncOpenAI
 import os
-from otools_autogen.utils import llm_logger
+import logging
 
+llm_logger = logging.getLogger("otools_autogen_llm")
 
 class CriticToolRequest(BaseModel):
     information_set: str = Field(description="Complete Information set that should be validated by critic tool ")

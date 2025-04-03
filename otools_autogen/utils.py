@@ -5,6 +5,19 @@ import os
 
 
 def only_direct(func):
+    """
+    A decorator that ensures the decorated asynchronous function is only executed 
+    if the `ctx` argument is either not provided or does not have a `topic_id` attribute.
+
+    If `ctx` is provided and has a `topic_id` attribute, the function will return `None` 
+    instead of executing the decorated function.
+
+    Args:
+        func (Callable): The asynchronous function to be decorated.
+
+    Returns:
+        Callable: The wrapped asynchronous function.
+    """
     @wraps(func)
     async def wrapper(*args, **kwargs):
         ctx = kwargs.get("ctx", None)
@@ -15,32 +28,3 @@ def only_direct(func):
         else:
             return None
     return wrapper
-
-
-
-
-
-logger = logging.getLogger("otools_autogen")
-logger.addHandler(logging.StreamHandler())
-logger.setLevel(logging.ERROR)
-
-
-timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
-log_filename = f"logs/otools_autogen_llm_{timestamp}.log"
-
-os.makedirs(os.path.dirname(log_filename), exist_ok=True)
-
-
-
-llm_logger = logging.getLogger("otools_autogen_llm")
-llm_logger.setLevel(logging.DEBUG)
-
-file_handler = logging.FileHandler(log_filename,encoding="utf-8")
-file_handler.setLevel(logging.DEBUG)
-file_handler.setFormatter(logging.Formatter('%(asctime)s - %(levelname)s - %(message)s'))
-
-console_handler = logging.StreamHandler()
-console_handler.setLevel(logging.DEBUG)
-
-llm_logger.addHandler(file_handler)
-# llm_logger.addHandler(console_handler)

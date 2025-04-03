@@ -1,5 +1,6 @@
 from dataclasses import dataclass
 from datetime import datetime
+import logging
 from pydantic import BaseModel
 import asyncio
 from PIL import Image
@@ -21,11 +22,15 @@ from .tools import ToolCard, Tool
 
 
 
-from .utils import only_direct, logger, llm_logger
+from .utils import only_direct
+
+llm_logger = logging.getLogger("otools_autogen_llm")
+logger = logging.getLogger("otools_autogen")
+
 
 
 if TYPE_CHECKING:
-    from .manager_v2 import Manager, UserRequest, UserResponse
+    from .runtime import Manager, UserRequest, UserResponse
     
     
 @dataclass
@@ -142,6 +147,31 @@ def get_image_info(image_path: str) -> Dict[str, Any]:
     
     
 class Orchestrator(BaseAgent):
+    """
+    Orchestrator class that extends the BaseAgent to handle complex workflows involving multiple tools and agents.
+    Attributes:
+        _manager (Manager): The manager instance responsible for handling sessions and tool cards.
+    Methods:
+        __init__(manager: "Manager"):
+            Initializes the Orchestrator instance with a manager and sets up the agent.
+        async on_message_impl(message: "UserRequest", ctx: MessageContext) -> None:
+            Handles incoming messages and orchestrates the workflow by interacting with various agents and tools.
+            This includes:
+            - Analyzing the user query and associated images.
+            - Predicting the next action and selecting the appropriate tool.
+            - Generating commands for the selected tool and executing them.
+            - Verifying the context and determining whether to continue or stop the workflow.
+            - Generating the final output based on the accumulated actions and results.
+            Args:
+                message (UserRequest): The incoming user request containing the query, files, and other parameters.
+                ctx (MessageContext): The context of the message, including session and topic information.
+            Workflow:
+                1. Analyze the user query and images using the QueryAnalyzer agent.
+                2. Iteratively predict actions, execute tools, and verify context until a stopping condition is met or the maximum steps are reached.
+                3. Generate and send the final output to the client.
+            Raises:
+                Exception: If any error occurs during tool execution or message handling.
+    """
     def __init__(self, manager:"Manager"):
         super(self.__class__, self).__init__("OrchestratorAgent")
         logger.debug(f"Orchestrator initialized. {str(self)} {self.id}")
@@ -151,8 +181,30 @@ class Orchestrator(BaseAgent):
     
     
     async def on_message_impl(self, message:"UserRequest", ctx: MessageContext)->None:
+        """
+        Handles incoming messages and orchestrates the interaction between various agents 
+        to process the user's request.
+        Args:
+            message (UserRequest): The incoming user request containing the query, files, 
+                and other relevant information.
+            ctx (MessageContext): The context of the message, including topic and session details.
+        Returns:
+            None
+        Workflow:
+            1. Initializes session and retrieves the client queue.
+            2. Analyzes the user query and associated images using the QueryAnalyzer agent.
+            3. Iteratively predicts actions using the ActionPredictor agent and generates 
+               commands for tools using the CommandGenerator agent.
+            4. Executes the selected tool and updates the action history.
+            5. Verifies the context after each step using the ContextVerifier agent.
+            6. Stops the process if a stop signal is received or the maximum steps are reached.
+            7. Generates the final output using the FinalOutputAgent and sends it to the client.
+        Notes:
+            - Handles errors during tool execution and logs them in the action history.
+            - Sends intermediate and final responses to the client queue.
+        """
         if message=="bootstrap": return
-        from .manager_v2 import UserResponse
+        from .runtime import UserResponse
         session_id = None
         if not ctx.topic_id is None:
             session_id = ctx.topic_id.source
@@ -283,6 +335,29 @@ class Orchestrator(BaseAgent):
             
             
 class QueryAnalyzer(BaseAgent):
+    """QueryAnalyzer is a specialized agent designed to analyze user queries and accompanying inputs, 
+    determine the necessary skills and tools required to address the query, and provide a structured 
+    response with actionable insights.
+    Methods:
+        __init__():
+            Initializes the QueryAnalyzer instance and logs its creation.
+        on_message_impl(message: QueryAnalyzerRequest, ctx: MessageContext) -> None:
+            Handles incoming messages directed to the QueryAnalyzer. It processes the message 
+            and delegates the analysis task to the `analyze` method.
+        analyze(message: QueryAnalyzerRequest) -> QueryAnalysisLLMResponse:
+            Analyzes the user query and accompanying inputs to identify objectives, required skills, 
+            and relevant tools. It constructs a detailed prompt for an LLM (Language Model) to generate 
+            a structured response. The analysis includes:
+            - Summarizing the query's main points and objectives.
+            - Listing required skills with explanations.
+            - Identifying relevant tools from the toolbox with explanations of their usage and limitations.
+            - Highlighting additional considerations for addressing the query effectively.
+            Parameters:
+                message (QueryAnalyzerRequest): The request containing the user query, image information, 
+                                                available tools, and metadata.
+            Returns:
+                QueryAnalysisLLMResponse: A structured response generated by the LLM containing the analysis 
+                                          of the query, required skills, relevant tools, and additional considerations."""
     def __init__(self):
         super().__init__("QueryAnalyzer")
         logger.debug(f"QueryAnalyzer initialized. {str(self)} {self.id}")
@@ -344,6 +419,30 @@ Please present your analysis in a clear, structured format.
         
         
 class ActionPredictor(BaseAgent):
+    """ActionPredictor is a specialized agent that determines the optimal next step in a multi-step process 
+    to address a given query. It leverages contextual information, including query analysis, available tools, 
+    tool metadata, and the history of previous steps, to make informed decisions.
+    Methods:
+        __init__():
+            Initializes the ActionPredictor instance and logs its creation.
+        on_message_impl(message: ActionPredictorRequest, ctx: MessageContext) -> None:
+            Handles incoming messages of type ActionPredictorRequest. Processes the message 
+            and invokes the prediction logic to determine the next step.
+        predict(message: ActionPredictorRequest) -> str:
+            Generates a detailed prompt based on the provided context and sends it to an 
+            external LLM (Language Model) for processing. The LLM's response includes:
+            - Justification for the selected tool.
+            - Context required for the tool to function.
+            - A specific sub-goal for the tool.
+            - The name of the selected tool.
+            Returns the LLM's response as a string.
+    Attributes:
+        id (str):
+            Unique identifier for the ActionPredictor instance.
+    Usage:
+        This class is designed to be used in scenarios where a multi-step process requires 
+        intelligent decision-making to determine the next optimal action. It integrates with 
+        external tools and metadata to achieve its objectives."""
     def __init__(self):
         super().__init__("ActionPredictor")
         logger.debug(f"ActionPredictor initialized. {str(self)} {self.id}")
@@ -432,6 +531,34 @@ Example (do not copy, use only as reference):
         
 
 class CommandGenerator(BaseAgent):
+    """
+    CommandGenerator is a specialized agent responsible for generating precise arguments 
+    to execute a selected tool based on provided contextual information. It leverages 
+    an LLM (Language Model) to analyze the input and construct a valid JSON object 
+    representing the tool's execution parameters.
+    Methods:
+        __init__():
+            Initializes the CommandGenerator instance and logs its creation.
+        on_message_impl(message: CommandGeneratorRequest, ctx: MessageContext) -> None:
+            Handles incoming messages by invoking the `generate_command` method 
+            to process the request and generate the required tool execution argument.
+        generate_command(message: CommandGeneratorRequest) -> str:
+            Constructs a prompt for the LLM to generate a valid JSON argument for 
+            executing the selected tool. The prompt includes detailed instructions, 
+            rules, and examples to guide the LLM in generating the output. The method 
+            ensures the response adheres to the tool's input schema and addresses the 
+            provided sub-goal and context.
+    Attributes:
+        - Inherits attributes from BaseAgent.
+        - Utilizes an LLM client for generating responses.
+    Usage:
+        This class is designed to be used in scenarios where precise tool execution 
+        arguments need to be dynamically generated based on user input and contextual 
+        metadata. It ensures compliance with the tool's input schema and provides 
+        detailed analysis and explanations for the generated arguments.
+    """
+    
+    
     def __init__(self):
         super().__init__("CommandGenerator")
         logger.debug(f"CommandGenerator initialized. {str(self)} {self.id}")

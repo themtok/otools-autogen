@@ -3,7 +3,9 @@ from otools_autogen.tools import Tool, ToolCard
 import trafilatura
 from openai import AsyncOpenAI
 import os
-from otools_autogen.utils import llm_logger
+import logging
+
+llm_logger = logging.getLogger("otools_autogen_llm")
 
 class PageContentExtractionRequest(BaseModel):
     link: str = Field(None, description="Link to the page to extract content from")

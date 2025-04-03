@@ -2,8 +2,9 @@ from pydantic import BaseModel, Field
 from otools_autogen.tools import Tool, ToolCard
 from openai import AsyncOpenAI
 import os
-from otools_autogen.utils import llm_logger
+import logging
 
+llm_logger = logging.getLogger("otools_autogen_llm")
 
 class GeneralistToolRequest(BaseModel):
     prompt: str = Field(description=" The prompt that includes query from the user to guide the agent to generate response (Examples: 'Describe this image in detail')")
